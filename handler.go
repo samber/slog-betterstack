@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -27,6 +26,8 @@ type Option struct {
 	Converter Converter
 	// optional: custom marshaler
 	Marshaler func(v any) ([]byte, error)
+	// optional: fetch attributes from context
+	AttrFromContext []func(ctx context.Context) []slog.Attr
 
 	// optional: see slog.HandlerOptions
 	AddSource   bool
@@ -54,6 +55,10 @@ func (o Option) NewBetterstackHandler() slog.Handler {
 		o.Marshaler = json.Marshal
 	}
 
+	if o.AttrFromContext == nil {
+		o.AttrFromContext = []func(ctx context.Context) []slog.Attr{}
+	}
+
 	return &BetterstackHandler{
 		option: o,
 		attrs:  []slog.Attr{},
@@ -74,7 +79,8 @@ func (h *BetterstackHandler) Enabled(_ context.Context, level slog.Level) bool {
 }
 
 func (h *BetterstackHandler) Handle(ctx context.Context, record slog.Record) error {
-	payload := h.option.Converter(h.option.AddSource, h.option.ReplaceAttr, h.attrs, h.groups, &record)
+	fromContext := slogcommon.ContextExtractor(ctx, h.option.AttrFromContext)
+	payload := h.option.Converter(h.option.AddSource, h.option.ReplaceAttr, append(h.attrs, fromContext...), h.groups, &record)
 
 	go func() {
 		// @TODO: batching ?
@@ -127,7 +133,6 @@ func send(endpoint string, token string, timeout time.Duration, marshaler func(v
 
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println(err)
 		return err
 	}
 
