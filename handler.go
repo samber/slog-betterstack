@@ -82,6 +82,7 @@ func (h *BetterstackHandler) Handle(ctx context.Context, record slog.Record) err
 	fromContext := slogcommon.ContextExtractor(ctx, h.option.AttrFromContext)
 	payload := h.option.Converter(h.option.AddSource, h.option.ReplaceAttr, append(h.attrs, fromContext...), h.groups, &record)
 
+	// non-blocking
 	go func() {
 		// @TODO: batching ?
 		_ = send(BetterstackEndpoint, h.option.Token, h.option.Timeout, h.option.Marshaler, []map[string]any{payload})
