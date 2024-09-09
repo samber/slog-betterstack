@@ -1,4 +1,4 @@
 package slogbetterstack
 
 const name = "samber/slog-betterstack"
-const version = "VERSION" // replaced by .github/workflows/release.yml
+const version = "v1.3.1" // replaced by .github/workflows/release.yml
