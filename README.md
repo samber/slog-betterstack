@@ -93,7 +93,10 @@ type Option struct {
 
   // token
   Token   string
-  Timeout time.Duration // default: 10s
+  // optional: endpoint
+  Endpoint string
+  // default: 10s
+  Timeout time.Duration
 
   // optional: customize record builder
   Converter Converter
