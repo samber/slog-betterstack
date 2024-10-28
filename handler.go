@@ -20,7 +20,10 @@ type Option struct {
 
 	// token
 	Token   string
-	Timeout time.Duration // default: 10s
+	// optional: endpoint
+	Endpoint string
+	// default: 10s
+	Timeout time.Duration
 
 	// optional: customize record builder
 	Converter Converter
@@ -32,9 +35,6 @@ type Option struct {
 	// optional: see slog.HandlerOptions
 	AddSource   bool
 	ReplaceAttr func(groups []string, a slog.Attr) slog.Attr
-
-	// optional: endpoint
-	Endpoint string
 }
 
 func (o Option) NewBetterstackHandler() slog.Handler {
