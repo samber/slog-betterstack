@@ -32,6 +32,9 @@ type Option struct {
 	// optional: see slog.HandlerOptions
 	AddSource   bool
 	ReplaceAttr func(groups []string, a slog.Attr) slog.Attr
+
+	// optional: endpoint
+	Endpoint string
 }
 
 func (o Option) NewBetterstackHandler() slog.Handler {
@@ -41,6 +44,10 @@ func (o Option) NewBetterstackHandler() slog.Handler {
 
 	if o.Token == "" {
 		panic("missing Betterstack token")
+	}
+
+	if o.Endpoint == "" {
+		o.Endpoint = BetterstackEndpoint
 	}
 
 	if o.Timeout == 0 {
@@ -85,7 +92,7 @@ func (h *BetterstackHandler) Handle(ctx context.Context, record slog.Record) err
 	// non-blocking
 	go func() {
 		// @TODO: batching ?
-		_ = send(BetterstackEndpoint, h.option.Token, h.option.Timeout, h.option.Marshaler, []map[string]any{payload})
+		_ = send(h.option.Endpoint, h.option.Token, h.option.Timeout, h.option.Marshaler, []map[string]any{payload})
 	}()
 
 	return nil
