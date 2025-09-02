@@ -149,7 +149,7 @@ func send(endpoint string, token string, timeout time.Duration, marshaler func(v
 		return err
 	}
 
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	return nil
 }
