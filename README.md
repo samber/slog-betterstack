@@ -114,6 +114,10 @@ type Option struct {
   // optional: records buffered while a batch is in flight (default: 1000).
   // When the queue is full, records are dropped and reported through OnError.
   QueueSize int
+  // optional: retries after a network error, 429 or 5xx (default: 3, -1 disables)
+  MaxRetries int
+  // optional: delay before the first retry, doubled on each following one (default: 500ms)
+  RetryBackoff time.Duration
   // optional: called when a record cannot be delivered
   // (default: one line on stderr)
   OnError func(err error)

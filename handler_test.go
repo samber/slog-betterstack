@@ -21,7 +21,7 @@ func newTestHandler(t *testing.T, status int, body string, onError func(error)) 
 	}))
 	t.Cleanup(srv.Close)
 
-	h := Option{Token: "t", Endpoint: srv.URL, OnError: onError, FlushInterval: 10 * time.Millisecond}.NewBetterstackHandler()
+	h := Option{Token: "t", Endpoint: srv.URL, OnError: onError, FlushInterval: 10 * time.Millisecond, MaxRetries: -1}.NewBetterstackHandler()
 	t.Cleanup(func() { _ = h.Close() })
 
 	return h
@@ -70,7 +70,7 @@ func TestOnError_NotCalledOnSuccess(t *testing.T) {
 			close(done)
 		}))
 
-		h := Option{Token: "t", Endpoint: srv.URL, OnError: func(error) { called <- struct{}{} }, FlushInterval: 10 * time.Millisecond}.NewBetterstackHandler()
+		h := Option{Token: "t", Endpoint: srv.URL, OnError: func(error) { called <- struct{}{} }, FlushInterval: 10 * time.Millisecond, MaxRetries: -1}.NewBetterstackHandler()
 		slog.New(h).Info("hello")
 
 		select {
@@ -96,7 +96,7 @@ func TestOnError_NetworkAndMarshalFailure(t *testing.T) {
 	endpoint := srv.URL
 	srv.Close() // connection refused from here on
 
-	refused := Option{Token: "t", Endpoint: endpoint, OnError: func(err error) { errs <- err }, FlushInterval: 10 * time.Millisecond}.NewBetterstackHandler()
+	refused := Option{Token: "t", Endpoint: endpoint, OnError: func(err error) { errs <- err }, FlushInterval: 10 * time.Millisecond, MaxRetries: -1}.NewBetterstackHandler()
 	defer refused.Close() //nolint:errcheck
 	slog.New(refused).Info("hello")
 
@@ -106,7 +106,7 @@ func TestOnError_NetworkAndMarshalFailure(t *testing.T) {
 		Endpoint:      endpoint,
 		Marshaler:     func(any) ([]byte, error) { return nil, marshalErr },
 		OnError:       func(err error) { errs <- err },
-		FlushInterval: 10 * time.Millisecond,
+		FlushInterval: 10 * time.Millisecond, MaxRetries: -1,
 	}.NewBetterstackHandler()
 	defer failing.Close() //nolint:errcheck
 	slog.New(failing).Info("hello")
