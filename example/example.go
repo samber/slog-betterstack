@@ -10,7 +10,10 @@ import (
 )
 
 func main() {
-	logger := slog.New(slogbetterstack.Option{Level: slog.LevelDebug, Token: "xxxx"}.NewBetterstackHandler())
+	handler := slogbetterstack.Option{Level: slog.LevelDebug, Token: "xxxx"}.NewBetterstackHandler()
+	defer handler.Close() //nolint:errcheck
+
+	logger := slog.New(handler)
 	logger = logger.With("release", "v1.0.0")
 
 	logger.
@@ -22,6 +25,4 @@ func main() {
 		).
 		With("error", fmt.Errorf("an error")).
 		Error("a message", slog.Int("count", 1))
-
-	time.Sleep(1 * time.Second)
 }

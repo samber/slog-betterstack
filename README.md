@@ -107,6 +107,17 @@ type Option struct {
   // default: 10s
   Timeout time.Duration
 
+  // optional: max records per HTTP request (default: 100)
+  BatchSize int
+  // optional: max delay before a partial batch is sent (default: 1s)
+  FlushInterval time.Duration
+  // optional: records buffered while a batch is in flight (default: 1000).
+  // When the queue is full, records are dropped and reported through OnError.
+  QueueSize int
+  // optional: called when a record cannot be delivered
+  // (default: one line on stderr)
+  OnError func(err error)
+
   // optional: customize record builder
   Converter Converter
   // optional: custom marshaler
@@ -128,6 +139,15 @@ slogbetterstack.ContextKey = "context"
 slogbetterstack.ErrorKeys = []string{"error", "err"}
 ```
 
+Records are sent in batches by a background worker. Call `Close` before the process exits: it delivers the records still queued.
+
+```go
+handler := slogbetterstack.Option{Token: "xxxxx"}.NewBetterstackHandler()
+defer handler.Close()
+
+logger := slog.New(handler)
+```
+
 ### Example
 
 ```go
@@ -142,7 +162,10 @@ import (
 )
 
 func main() {
-	logger := slog.New(slogbetterstack.Option{Level: slog.LevelDebug, Token: "xxxxx"}.NewBetterstackHandler())
+	handler := slogbetterstack.Option{Level: slog.LevelDebug, Token: "xxxxx"}.NewBetterstackHandler()
+	defer handler.Close()
+
+	logger := slog.New(handler)
 	logger = logger.With("release", "v1.0.0")
 
 	logger.
