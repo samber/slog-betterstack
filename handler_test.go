@@ -142,9 +142,9 @@ func TestOnError_DefaultWritesNothing(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	h := Option{Token: "t", Endpoint: srv.URL}.NewBetterstackHandler()
+	h := Option{Token: "t", Endpoint: srv.URL, MaxRetries: -1}.NewBetterstackHandler()
 	slog.New(h).Info("hello")
-	time.Sleep(100 * time.Millisecond) // the failing send runs in a goroutine
+	_ = h.Close() // waits for the failing send
 
 	_ = w.Close()
 	out, _ := io.ReadAll(r)
