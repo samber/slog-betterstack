@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"time"
 
 	"log/slog"
@@ -14,16 +17,25 @@ import (
 
 const BetterstackEndpoint = "https://in.logs.betterstack.com/"
 
+// maxErrorBodyBytes caps how much of a rejected response is quoted in an error,
+// so a large HTML error page cannot flood stderr.
+const maxErrorBodyBytes = 512
+
 type Option struct {
 	// log level (default: debug)
 	Level slog.Leveler
 
 	// token
-	Token   string
+	Token string
 	// optional: endpoint
 	Endpoint string
 	// default: 10s
 	Timeout time.Duration
+
+	// optional: called when a record cannot be delivered (marshaling failure,
+	// network error, non-2xx response).
+	// default: print one line on stderr
+	OnError func(err error)
 
 	// optional: customize record builder
 	Converter Converter
@@ -52,6 +64,10 @@ func (o Option) NewBetterstackHandler() slog.Handler {
 
 	if o.Timeout == 0 {
 		o.Timeout = 10 * time.Second
+	}
+
+	if o.OnError == nil {
+		o.OnError = defaultOnError
 	}
 
 	if o.Converter == nil {
@@ -92,7 +108,10 @@ func (h *BetterstackHandler) Handle(ctx context.Context, record slog.Record) err
 	// non-blocking
 	go func() {
 		// @TODO: batching ?
-		_ = send(h.option.Endpoint, h.option.Token, h.option.Timeout, h.option.Marshaler, []map[string]any{payload})
+		err := send(h.option.Endpoint, h.option.Token, h.option.Timeout, h.option.Marshaler, []map[string]any{payload})
+		if err != nil {
+			h.option.OnError(err)
+		}
 	}()
 
 	return nil
@@ -151,5 +170,15 @@ func send(endpoint string, token string, timeout time.Duration, marshaler func(v
 
 	defer resp.Body.Close() //nolint:errcheck
 
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		// best effort: the status code alone is already actionable
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+		return fmt.Errorf("betterstack rejected logs: status %d: %s", resp.StatusCode, bytes.TrimSpace(snippet))
+	}
+
 	return nil
+}
+
+func defaultOnError(err error) {
+	fmt.Fprintf(os.Stderr, "slog-betterstack: %v\n", err)
 }
