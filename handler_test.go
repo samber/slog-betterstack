@@ -2,9 +2,11 @@ package slogbetterstack
 
 import (
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -114,5 +116,31 @@ func TestOnError_NetworkAndMarshalFailure(t *testing.T) {
 	}
 	if !sawMarshal {
 		t.Fatal("marshal error not reported")
+	}
+}
+
+func TestOnError_DefaultWritesNothing(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stderr := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = stderr }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		rw.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	h := Option{Token: "t", Endpoint: srv.URL}.NewBetterstackHandler()
+	slog.New(h).Info("hello")
+	time.Sleep(100 * time.Millisecond) // the failing send runs in a goroutine
+
+	_ = w.Close()
+	out, _ := io.ReadAll(r)
+	if len(out) != 0 {
+		t.Fatalf("expected no output by default, got %q", out)
 	}
 }

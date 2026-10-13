@@ -108,7 +108,7 @@ type Option struct {
   Timeout time.Duration
 
   // optional: called when a record cannot be delivered
-  // (default: one line on stderr)
+  // (default: errors are ignored)
   OnError func(err error)
 
   // optional: customize record builder

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"time"
 
 	"log/slog"
@@ -18,7 +17,7 @@ import (
 const BetterstackEndpoint = "https://in.logs.betterstack.com/"
 
 // maxErrorBodyBytes caps how much of a rejected response is quoted in an error,
-// so a large HTML error page cannot flood stderr.
+// so a large HTML error page cannot flood the error handler.
 const maxErrorBodyBytes = 512
 
 type Option struct {
@@ -34,7 +33,7 @@ type Option struct {
 
 	// optional: called when a record cannot be delivered (marshaling failure,
 	// network error, non-2xx response).
-	// default: print one line on stderr
+	// default: errors are ignored
 	OnError func(err error)
 
 	// optional: customize record builder
@@ -179,6 +178,5 @@ func send(endpoint string, token string, timeout time.Duration, marshaler func(v
 	return nil
 }
 
-func defaultOnError(err error) {
-	fmt.Fprintf(os.Stderr, "slog-betterstack: %v\n", err)
-}
+// defaultOnError ignores errors: a logging library must not write to stderr unasked.
+func defaultOnError(error) {}
