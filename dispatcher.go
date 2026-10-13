@@ -1,8 +1,9 @@
 package slogbetterstack
 
 import (
+	"crypto/rand"
 	"errors"
-	"math/rand"
+	"math/big"
 	"sync"
 	"time"
 )
@@ -144,11 +145,20 @@ func (d *dispatcher) sendWithRetry(batch []map[string]any) error {
 // jitter returns a random duration in [d, d+d/2]. Without it, handlers that failed
 // together (a server outage hitting every replica) would retry in lockstep.
 // It only ever lengthens the wait, so the backoff stays a lower bound.
+//
+// crypto/rand is not needed for security here. It keeps the static analysis
+// gate (weak PRNG rule) green and costs nothing next to a network retry.
 func jitter(d time.Duration) time.Duration {
 	spread := d / 2
 	if spread <= 0 {
 		return d
 	}
 
-	return d + time.Duration(rand.Int63n(int64(spread)+1))
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(spread)+1))
+	if err != nil {
+		// no randomness available: waiting the plain backoff is still correct
+		return d
+	}
+
+	return d + time.Duration(n.Int64())
 }
