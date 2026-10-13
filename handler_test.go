@@ -14,7 +14,7 @@ import (
 
 const testWait = 2 * time.Second // generous: delivery runs in a goroutine
 
-func newTestHandler(t *testing.T, status int, body string, onError func(error)) slog.Handler {
+func newTestHandler(t *testing.T, status int, body string, onError func(error)) *BetterstackHandler {
 	t.Helper()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -23,7 +23,10 @@ func newTestHandler(t *testing.T, status int, body string, onError func(error)) 
 	}))
 	t.Cleanup(srv.Close)
 
-	return Option{Token: "t", Endpoint: srv.URL, OnError: onError}.NewBetterstackHandler()
+	h := Option{Token: "t", Endpoint: srv.URL, OnError: onError, FlushInterval: 10 * time.Millisecond, MaxRetries: -1}.NewBetterstackHandler()
+	t.Cleanup(func() { _ = h.Close() })
+
+	return h
 }
 
 func TestOnError_RejectedStatus(t *testing.T) {
@@ -69,15 +72,15 @@ func TestOnError_NotCalledOnSuccess(t *testing.T) {
 			close(done)
 		}))
 
-		logger := slog.New(Option{Token: "t", Endpoint: srv.URL, OnError: func(error) { called <- struct{}{} }}.NewBetterstackHandler())
-		logger.Info("hello")
+		h := Option{Token: "t", Endpoint: srv.URL, OnError: func(error) { called <- struct{}{} }, FlushInterval: 10 * time.Millisecond, MaxRetries: -1}.NewBetterstackHandler()
+		slog.New(h).Info("hello")
 
 		select {
 		case <-done:
 		case <-time.After(testWait):
 			t.Fatalf("status %d: request not received", status)
 		}
-		time.Sleep(50 * time.Millisecond) // let the sender goroutine return
+		_ = h.Close()
 		srv.Close()
 
 		select {
@@ -95,15 +98,20 @@ func TestOnError_NetworkAndMarshalFailure(t *testing.T) {
 	endpoint := srv.URL
 	srv.Close() // connection refused from here on
 
-	slog.New(Option{Token: "t", Endpoint: endpoint, OnError: func(err error) { errs <- err }}.NewBetterstackHandler()).Info("hello")
+	refused := Option{Token: "t", Endpoint: endpoint, OnError: func(err error) { errs <- err }, FlushInterval: 10 * time.Millisecond, MaxRetries: -1}.NewBetterstackHandler()
+	defer refused.Close() //nolint:errcheck
+	slog.New(refused).Info("hello")
 
 	marshalErr := errors.New("boom")
-	slog.New(Option{
-		Token:     "t",
-		Endpoint:  endpoint,
-		Marshaler: func(any) ([]byte, error) { return nil, marshalErr },
-		OnError:   func(err error) { errs <- err },
-	}.NewBetterstackHandler()).Info("hello")
+	failing := Option{
+		Token:         "t",
+		Endpoint:      endpoint,
+		Marshaler:     func(any) ([]byte, error) { return nil, marshalErr },
+		OnError:       func(err error) { errs <- err },
+		FlushInterval: 10 * time.Millisecond, MaxRetries: -1,
+	}.NewBetterstackHandler()
+	defer failing.Close() //nolint:errcheck
+	slog.New(failing).Info("hello")
 
 	sawMarshal := false
 	for i := 0; i < 2; i++ {
@@ -134,9 +142,9 @@ func TestOnError_DefaultWritesNothing(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	h := Option{Token: "t", Endpoint: srv.URL}.NewBetterstackHandler()
+	h := Option{Token: "t", Endpoint: srv.URL, MaxRetries: -1}.NewBetterstackHandler()
 	slog.New(h).Info("hello")
-	time.Sleep(100 * time.Millisecond) // the failing send runs in a goroutine
+	_ = h.Close() // waits for the failing send
 
 	_ = w.Close()
 	out, _ := io.ReadAll(r)

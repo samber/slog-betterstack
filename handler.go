@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,6 +32,25 @@ type Option struct {
 	// default: 10s
 	Timeout time.Duration
 
+	// optional: max records per HTTP request
+	// default: 100
+	BatchSize int
+	// optional: max delay before a partial batch is sent
+	// default: 1s
+	FlushInterval time.Duration
+	// optional: records buffered while a batch is in flight. Records are
+	// dropped (and reported through OnError) when the queue is full.
+	// default: 1000
+	QueueSize int
+
+	// optional: retries after a failed attempt (network error, 429 or 5xx)
+	// default: 3
+	MaxRetries int
+	// optional: delay before the first retry, doubled on each following one,
+	// randomized between 100% and 150% to avoid synchronized retries
+	// default: 500ms
+	RetryBackoff time.Duration
+
 	// optional: called when a record cannot be delivered (marshaling failure,
 	// network error, non-2xx response).
 	// default: errors are ignored
@@ -48,7 +68,9 @@ type Option struct {
 	ReplaceAttr func(groups []string, a slog.Attr) slog.Attr
 }
 
-func (o Option) NewBetterstackHandler() slog.Handler {
+// NewBetterstackHandler starts a background worker. Call Close before the
+// process exits, or queued records are lost.
+func (o Option) NewBetterstackHandler() *BetterstackHandler {
 	if o.Level == nil {
 		o.Level = slog.LevelDebug
 	}
@@ -69,6 +91,26 @@ func (o Option) NewBetterstackHandler() slog.Handler {
 		o.OnError = defaultOnError
 	}
 
+	if o.BatchSize <= 0 {
+		o.BatchSize = defaultBatchSize
+	}
+
+	if o.FlushInterval <= 0 {
+		o.FlushInterval = defaultFlushInterval
+	}
+
+	if o.QueueSize <= 0 {
+		o.QueueSize = defaultQueueSize
+	}
+
+	if o.MaxRetries == 0 {
+		o.MaxRetries = defaultMaxRetries
+	}
+
+	if o.RetryBackoff <= 0 {
+		o.RetryBackoff = defaultRetryBackoff
+	}
+
 	if o.Converter == nil {
 		o.Converter = DefaultConverter
 	}
@@ -82,18 +124,20 @@ func (o Option) NewBetterstackHandler() slog.Handler {
 	}
 
 	return &BetterstackHandler{
-		option: o,
-		attrs:  []slog.Attr{},
-		groups: []string{},
+		option:     o,
+		dispatcher: newDispatcher(o),
+		attrs:      []slog.Attr{},
+		groups:     []string{},
 	}
 }
 
 var _ slog.Handler = (*BetterstackHandler)(nil)
 
 type BetterstackHandler struct {
-	option Option
-	attrs  []slog.Attr
-	groups []string
+	option     Option
+	dispatcher *dispatcher
+	attrs      []slog.Attr
+	groups     []string
 }
 
 func (h *BetterstackHandler) Enabled(_ context.Context, level slog.Level) bool {
@@ -104,23 +148,25 @@ func (h *BetterstackHandler) Handle(ctx context.Context, record slog.Record) err
 	fromContext := slogcommon.ContextExtractor(ctx, h.option.AttrFromContext)
 	payload := h.option.Converter(h.option.AddSource, h.option.ReplaceAttr, append(h.attrs, fromContext...), h.groups, &record)
 
-	// non-blocking
-	go func() {
-		// @TODO: batching ?
-		err := send(h.option.Endpoint, h.option.Token, h.option.Timeout, h.option.Marshaler, []map[string]any{payload})
-		if err != nil {
-			h.option.OnError(err)
-		}
-	}()
+	h.dispatcher.enqueue(payload)
 
+	return nil
+}
+
+// Close stops accepting records and delivers the ones still queued. It is safe
+// to call more than once, and it covers handlers derived with WithAttrs or
+// WithGroup. Delivery failures are reported through OnError.
+func (h *BetterstackHandler) Close() error {
+	h.dispatcher.close()
 	return nil
 }
 
 func (h *BetterstackHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return &BetterstackHandler{
-		option: h.option,
-		attrs:  slogcommon.AppendAttrsToGroup(h.groups, h.attrs, attrs...),
-		groups: h.groups,
+		option:     h.option,
+		dispatcher: h.dispatcher,
+		attrs:      slogcommon.AppendAttrsToGroup(h.groups, h.attrs, attrs...),
+		groups:     h.groups,
 	}
 }
 
@@ -131,9 +177,10 @@ func (h *BetterstackHandler) WithGroup(name string) slog.Handler {
 	}
 
 	return &BetterstackHandler{
-		option: h.option,
-		attrs:  h.attrs,
-		groups: append(h.groups, name),
+		option:     h.option,
+		dispatcher: h.dispatcher,
+		attrs:      h.attrs,
+		groups:     append(h.groups, name),
 	}
 }
 
@@ -144,7 +191,7 @@ func send(endpoint string, token string, timeout time.Duration, marshaler func(v
 
 	json, err := marshaler(payload)
 	if err != nil {
-		return err
+		return &permanentError{err}
 	}
 
 	body := bytes.NewBuffer(json)
@@ -155,7 +202,7 @@ func send(endpoint string, token string, timeout time.Duration, marshaler func(v
 	// @TODO: maintain a pool of tcp connections
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, body)
 	if err != nil {
-		return err
+		return &permanentError{err}
 	}
 
 	req.Header.Add("authorization", `Bearer `+token)
@@ -172,10 +219,42 @@ func send(endpoint string, token string, timeout time.Duration, marshaler func(v
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		// best effort: the status code alone is already actionable
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
-		return fmt.Errorf("betterstack rejected logs: status %d: %s", resp.StatusCode, bytes.TrimSpace(snippet))
+		return &statusError{code: resp.StatusCode, body: string(bytes.TrimSpace(snippet))}
 	}
 
 	return nil
+}
+
+// permanentError marks a failure that a retry cannot fix.
+type permanentError struct{ err error }
+
+func (e *permanentError) Error() string { return e.err.Error() }
+func (e *permanentError) Unwrap() error { return e.err }
+
+// statusError is a non-2xx response.
+type statusError struct {
+	code int
+	body string
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("betterstack rejected logs: status %d: %s", e.code, e.body)
+}
+
+// retryable reports whether sending the same batch again can succeed: network
+// errors, throttling and server errors. Other 4xx (bad token, bad payload) fail the same way every time.
+func retryable(err error) bool {
+	var permanent *permanentError
+	if errors.As(err, &permanent) {
+		return false
+	}
+
+	var status *statusError
+	if errors.As(err, &status) {
+		return status.code == http.StatusTooManyRequests || status.code >= 500
+	}
+
+	return true
 }
 
 // defaultOnError ignores errors: a logging library must not write to stderr unasked.
