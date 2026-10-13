@@ -107,6 +107,10 @@ type Option struct {
   // default: 10s
   Timeout time.Duration
 
+  // optional: called when a record cannot be delivered
+  // (default: one line on stderr)
+  OnError func(err error)
+
   // optional: customize record builder
   Converter Converter
   // optional: custom marshaler
@@ -118,6 +122,15 @@ type Option struct {
   AddSource   bool
   ReplaceAttr func(groups []string, a slog.Attr) slog.Attr
 }
+```
+
+Delivery failures (marshaling error, network error, non-2xx response) are not returned by the logger. They are passed to `OnError`:
+
+```go
+slogbetterstack.Option{
+  Token:   "xxxxx",
+  OnError: func(err error) { myMetrics.Inc("betterstack_delivery_failed") },
+}.NewBetterstackHandler()
 ```
 
 Other global parameters:
