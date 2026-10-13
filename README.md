@@ -116,7 +116,7 @@ type Option struct {
   QueueSize int
   // optional: retries after a network error, 429 or 5xx (default: 3, -1 disables)
   MaxRetries int
-  // optional: delay before the first retry, doubled on each following one (default: 500ms)
+  // optional: delay before the first retry, doubled on each following one, with random jitter (default: 500ms)
   RetryBackoff time.Duration
   // optional: called when a record cannot be delivered
   // (default: one line on stderr)

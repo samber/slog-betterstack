@@ -47,7 +47,8 @@ type Option struct {
 	// optional: retries after a failed attempt (network error, 429 or 5xx)
 	// default: 3
 	MaxRetries int
-	// optional: delay before the first retry, doubled on each following one
+	// optional: delay before the first retry, doubled on each following one,
+	// randomized between 50% and 100% to avoid synchronized retries
 	// default: 500ms
 	RetryBackoff time.Duration
 

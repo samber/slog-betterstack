@@ -153,3 +153,35 @@ func TestRetryable(t *testing.T) {
 		}
 	}
 }
+
+func TestJitter_StaysWithinHalfToFullBackoff(t *testing.T) {
+	const backoff = 100 * time.Millisecond
+
+	min, max := backoff, time.Duration(0)
+	for i := 0; i < 10000; i++ {
+		got := jitter(backoff)
+		if got < backoff/2 || got > backoff {
+			t.Fatalf("jitter(%v) = %v, outside [%v, %v]", backoff, got, backoff/2, backoff)
+		}
+		if got < min {
+			min = got
+		}
+		if got > max {
+			max = got
+		}
+	}
+
+	// a constant result would mean jitter is not applied
+	if max-min < backoff/4 {
+		t.Fatalf("jitter barely varies: min %v, max %v", min, max)
+	}
+}
+
+func TestJitter_TinyDurationsDoNotPanic(t *testing.T) {
+	for _, d := range []time.Duration{-time.Second, 0, 1, 2, 3} {
+		got := jitter(d)
+		if d > 0 && (got < d/2 || got > d) {
+			t.Fatalf("jitter(%v) = %v, outside [%v, %v]", d, got, d/2, d)
+		}
+	}
+}

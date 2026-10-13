@@ -2,6 +2,7 @@ package slogbetterstack
 
 import (
 	"errors"
+	"math/rand"
 	"sync"
 	"time"
 )
@@ -119,7 +120,7 @@ func (d *dispatcher) run() {
 	}
 }
 
-// sendWithRetry retries retryable failures with exponential backoff and
+// sendWithRetry retries retryable failures with jittered exponential backoff and
 // returns the last error. A negative MaxRetries disables retries.
 func (d *dispatcher) sendWithRetry(batch []map[string]any) error {
 	backoff := d.option.RetryBackoff
@@ -131,11 +132,22 @@ func (d *dispatcher) sendWithRetry(batch []map[string]any) error {
 			return err
 		}
 
-		time.Sleep(backoff)
+		time.Sleep(jitter(backoff))
 
 		backoff *= 2
 		if backoff > maxRetryBackoff {
 			backoff = maxRetryBackoff
 		}
 	}
+}
+
+// jitter returns a random duration in [d/2, d]. Without it, handlers that failed
+// together (a server outage hitting every replica) would retry in lockstep.
+func jitter(d time.Duration) time.Duration {
+	half := d / 2
+	if half <= 0 {
+		return d
+	}
+
+	return half + time.Duration(rand.Int63n(int64(half)+1))
 }
