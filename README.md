@@ -129,7 +129,7 @@ Delivery failures (marshaling error, network error, non-2xx response) are not re
 ```go
 slogbetterstack.Option{
   Token:   "xxxxx",
-  OnError: func(err error) { myMetrics.Inc("betterstack_delivery_failed") },
+  OnError: func(err error) { fmt.Fprintf(os.Stderr, "slog-betterstack: %v\n", err) },
 }.NewBetterstackHandler()
 ```
 
