@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,6 +42,14 @@ type Option struct {
 	// dropped (and reported through OnError) when the queue is full.
 	// default: 1000
 	QueueSize int
+
+	// optional: retries after a failed attempt (network error, 429 or 5xx)
+	// default: 3
+	MaxRetries int
+	// optional: delay before the first retry, doubled on each following one,
+	// randomized between 100% and 150% to avoid synchronized retries
+	// default: 500ms
+	RetryBackoff time.Duration
 
 	// optional: called when a record cannot be delivered (marshaling failure,
 	// network error, non-2xx response).
@@ -92,6 +101,14 @@ func (o Option) NewBetterstackHandler() *BetterstackHandler {
 
 	if o.QueueSize <= 0 {
 		o.QueueSize = defaultQueueSize
+	}
+
+	if o.MaxRetries == 0 {
+		o.MaxRetries = defaultMaxRetries
+	}
+
+	if o.RetryBackoff <= 0 {
+		o.RetryBackoff = defaultRetryBackoff
 	}
 
 	if o.Converter == nil {
@@ -174,7 +191,7 @@ func send(endpoint string, token string, timeout time.Duration, marshaler func(v
 
 	json, err := marshaler(payload)
 	if err != nil {
-		return err
+		return &permanentError{err}
 	}
 
 	body := bytes.NewBuffer(json)
@@ -185,7 +202,7 @@ func send(endpoint string, token string, timeout time.Duration, marshaler func(v
 	// @TODO: maintain a pool of tcp connections
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, body)
 	if err != nil {
-		return err
+		return &permanentError{err}
 	}
 
 	req.Header.Add("authorization", `Bearer `+token)
@@ -202,10 +219,42 @@ func send(endpoint string, token string, timeout time.Duration, marshaler func(v
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		// best effort: the status code alone is already actionable
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
-		return fmt.Errorf("betterstack rejected logs: status %d: %s", resp.StatusCode, bytes.TrimSpace(snippet))
+		return &statusError{code: resp.StatusCode, body: string(bytes.TrimSpace(snippet))}
 	}
 
 	return nil
+}
+
+// permanentError marks a failure that a retry cannot fix.
+type permanentError struct{ err error }
+
+func (e *permanentError) Error() string { return e.err.Error() }
+func (e *permanentError) Unwrap() error { return e.err }
+
+// statusError is a non-2xx response.
+type statusError struct {
+	code int
+	body string
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("betterstack rejected logs: status %d: %s", e.code, e.body)
+}
+
+// retryable reports whether sending the same batch again can succeed: network
+// errors, throttling and server errors. Other 4xx (bad token, bad payload) fail the same way every time.
+func retryable(err error) bool {
+	var permanent *permanentError
+	if errors.As(err, &permanent) {
+		return false
+	}
+
+	var status *statusError
+	if errors.As(err, &status) {
+		return status.code == http.StatusTooManyRequests || status.code >= 500
+	}
+
+	return true
 }
 
 // defaultOnError ignores errors: a logging library must not write to stderr unasked.

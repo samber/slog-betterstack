@@ -2,6 +2,7 @@ package slogbetterstack
 
 import (
 	"errors"
+	"math/rand"
 	"sync"
 	"time"
 )
@@ -10,6 +11,11 @@ const (
 	defaultBatchSize     = 100
 	defaultFlushInterval = time.Second
 	defaultQueueSize     = 1000
+	defaultMaxRetries    = 3
+	defaultRetryBackoff  = 500 * time.Millisecond
+
+	// maxRetryBackoff bounds the doubling delay (before jitter, which adds up to 50%), so a high MaxRetries does not stall Close for minutes.
+	maxRetryBackoff = 30 * time.Second
 )
 
 // ErrQueueFull is reported through OnError when a record is dropped because
@@ -87,7 +93,7 @@ func (d *dispatcher) run() {
 			return
 		}
 
-		err := send(d.option.Endpoint, d.option.Token, d.option.Timeout, d.option.Marshaler, batch)
+		err := d.sendWithRetry(batch)
 		if err != nil {
 			d.option.OnError(err)
 		}
@@ -112,4 +118,37 @@ func (d *dispatcher) run() {
 			flush()
 		}
 	}
+}
+
+// sendWithRetry retries retryable failures with jittered exponential backoff and
+// returns the last error. A negative MaxRetries disables retries.
+func (d *dispatcher) sendWithRetry(batch []map[string]any) error {
+	backoff := d.option.RetryBackoff
+
+	var err error
+	for attempt := 0; ; attempt++ {
+		err = send(d.option.Endpoint, d.option.Token, d.option.Timeout, d.option.Marshaler, batch)
+		if err == nil || !retryable(err) || attempt >= d.option.MaxRetries {
+			return err
+		}
+
+		time.Sleep(jitter(backoff))
+
+		backoff *= 2
+		if backoff > maxRetryBackoff {
+			backoff = maxRetryBackoff
+		}
+	}
+}
+
+// jitter returns a random duration in [d, d+d/2]. Without it, handlers that failed
+// together (a server outage hitting every replica) would retry in lockstep.
+// It only ever lengthens the wait, so the backoff stays a lower bound.
+func jitter(d time.Duration) time.Duration {
+	spread := d / 2
+	if spread <= 0 {
+		return d
+	}
+
+	return d + time.Duration(rand.Int63n(int64(spread)+1))
 }
