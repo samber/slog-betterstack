@@ -141,13 +141,14 @@ func (d *dispatcher) sendWithRetry(batch []map[string]any) error {
 	}
 }
 
-// jitter returns a random duration in [d/2, d]. Without it, handlers that failed
+// jitter returns a random duration in [d, d+d/2]. Without it, handlers that failed
 // together (a server outage hitting every replica) would retry in lockstep.
+// It only ever lengthens the wait, so the backoff stays a lower bound.
 func jitter(d time.Duration) time.Duration {
-	half := d / 2
-	if half <= 0 {
+	spread := d / 2
+	if spread <= 0 {
 		return d
 	}
 
-	return half + time.Duration(rand.Int63n(int64(half)+1))
+	return d + time.Duration(rand.Int63n(int64(spread)+1))
 }

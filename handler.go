@@ -48,7 +48,7 @@ type Option struct {
 	// default: 3
 	MaxRetries int
 	// optional: delay before the first retry, doubled on each following one,
-	// randomized between 50% and 100% to avoid synchronized retries
+	// randomized between 100% and 150% to avoid synchronized retries
 	// default: 500ms
 	RetryBackoff time.Duration
 

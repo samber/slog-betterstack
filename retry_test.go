@@ -154,14 +154,14 @@ func TestRetryable(t *testing.T) {
 	}
 }
 
-func TestJitter_StaysWithinHalfToFullBackoff(t *testing.T) {
+func TestJitter_StaysWithinBackoffAndOneAndAHalf(t *testing.T) {
 	const backoff = 100 * time.Millisecond
 
-	min, max := backoff, time.Duration(0)
+	min, max := 2*backoff, time.Duration(0)
 	for i := 0; i < 10000; i++ {
 		got := jitter(backoff)
-		if got < backoff/2 || got > backoff {
-			t.Fatalf("jitter(%v) = %v, outside [%v, %v]", backoff, got, backoff/2, backoff)
+		if got < backoff || got > backoff+backoff/2 {
+			t.Fatalf("jitter(%v) = %v, outside [%v, %v]", backoff, got, backoff, backoff+backoff/2)
 		}
 		if got < min {
 			min = got
@@ -180,8 +180,11 @@ func TestJitter_StaysWithinHalfToFullBackoff(t *testing.T) {
 func TestJitter_TinyDurationsDoNotPanic(t *testing.T) {
 	for _, d := range []time.Duration{-time.Second, 0, 1, 2, 3} {
 		got := jitter(d)
-		if d > 0 && (got < d/2 || got > d) {
-			t.Fatalf("jitter(%v) = %v, outside [%v, %v]", d, got, d/2, d)
+		if d > 0 && (got < d || got > d+d/2) {
+			t.Fatalf("jitter(%v) = %v, outside [%v, %v]", d, got, d, d+d/2)
+		}
+		if d <= 0 && got != d {
+			t.Fatalf("jitter(%v) = %v, want unchanged", d, got)
 		}
 	}
 }
