@@ -14,7 +14,7 @@ const (
 	defaultMaxRetries    = 3
 	defaultRetryBackoff  = 500 * time.Millisecond
 
-	// maxRetryBackoff bounds the doubling delay, so a high MaxRetries does not stall Close for minutes.
+	// maxRetryBackoff bounds the doubling delay (before jitter, which adds up to 50%), so a high MaxRetries does not stall Close for minutes.
 	maxRetryBackoff = 30 * time.Second
 )
 
